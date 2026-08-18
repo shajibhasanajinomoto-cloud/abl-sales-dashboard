@@ -110,12 +110,12 @@ button{font-family:'Inter',sans-serif;cursor:pointer;}
 .filter-group{position:relative;}
 .filter-btn{
   font-size:13px;padding:8px 12px;border-radius:8px;border:1px solid var(--border-strong);
-  background:var(--surface);display:flex;align-items:center;gap:6px;color:var(--ink);min-width:120px;justify-content:space-between;
+  background:var(--surface);display:flex;align-items:center;gap:6px;color:var(--ink);min-width:120px;max-width:260px;justify-content:space-between;
 }
 .filter-btn.active{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft);}
 .filter-count{
-  background:var(--accent);color:#fff;font-size:10.5px;font-weight:600;
-  padding:1px 6px;border-radius:10px;
+  background:var(--accent);color:#fff;font-size:11px;font-weight:500;
+  padding:2px 8px;border-radius:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .filter-panel{
   position:absolute;top:calc(100% + 6px);left:0;background:var(--surface);
@@ -502,13 +502,21 @@ function onFilterChanged(){
 function updateFilterChips(){
   document.querySelectorAll('.filter-group').forEach(g=>{
     const key = g.dataset.filter;
-    const boxes = document.querySelectorAll(`.filter-group[data-filter="${key}"] .filter-panel input[type=checkbox]`);
+    const boxes = [...document.querySelectorAll(`.filter-group[data-filter="${key}"] .filter-panel input[type=checkbox]`)];
     const total = boxes.length;
-    const sel = document.querySelectorAll(`.filter-group[data-filter="${key}"] .filter-panel input[type=checkbox]:checked`).length;
+    const checkedBoxes = boxes.filter(cb=>cb.checked);
+    const sel = checkedBoxes.length;
     const chip = g.querySelector('.fchip');
     const btn = g.querySelector('.filter-btn');
-    if(total>0 && sel<total){ chip.textContent = sel; chip.className='filter-count fchip'; btn.classList.add('active'); }
-    else { chip.textContent=''; chip.className='fchip'; btn.classList.remove('active'); }
+    if(total>0 && sel<total){
+      const label = sel<=2 ? checkedBoxes.map(cb=>cb.value).join(', ') : `${sel} selected`;
+      chip.textContent = label;
+      chip.title = checkedBoxes.map(cb=>cb.value).join(', ');
+      chip.className='filter-count fchip';
+      btn.classList.add('active');
+    } else {
+      chip.textContent=''; chip.title=''; chip.className='fchip'; btn.classList.remove('active');
+    }
   });
 }
 
