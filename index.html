@@ -379,10 +379,12 @@ footer{max-width:1400px;margin:30px auto 0;padding:16px 28px;color:var(--ink-fai
 const state = {
   raw: [],
   filtered: [],
-  filters: { depot:new Set(), team:new Set(), ctype:new Set(), product:new Set() },
+  /* excluded[field] = values the user has unchecked. Empty set = nothing excluded = everything shown. */
+  excluded: { depot:new Set(), team:new Set(), ctype:new Set(), product:new Set() },
   dateFrom: null, dateTo: null,
   sort: { depot:{key:'amt',dir:-1}, team:{key:'amt',dir:-1}, ctype:{key:'amt',dir:-1}, product:{key:'month',dir:1} }
 };
+const FILTER_FIELDS = ['depot','team','ctype','product'];
 const charts = {};
 const fmtInt = n => Math.round(n).toLocaleString('en-US');
 const fmtKg = n => (Math.round(n*10)/10).toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
@@ -430,7 +432,8 @@ function finishLoad(label, live){
   document.getElementById('footerSource').textContent = label;
   document.getElementById('footerTime').textContent = new Date().toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});
   setSourceStatus(live?'live':'ok', live? 'Connected to Google Sheets' : 'Using built-in March 2025 file');
-  buildFilterOptions();
+  state.excluded = { depot:new Set(), team:new Set(), ctype:new Set(), product:new Set() };
+  refreshFilterPanels();
   applyFilters();
 }
 
@@ -439,48 +442,72 @@ function setSourceStatus(kind,label){
   document.getElementById('sourceDot').className = 'dot' + (kind==='warn'?' warn':'');
 }
 
-/* ============ Filters UI ============ */
-function buildFilterOptions(){
-  const fields = {depot:'depot', team:'team', ctype:'ctype', product:'product'};
-  Object.keys(fields).forEach(key=>{
-    const vals = [...new Set(state.raw.map(r=>r[fields[key]]).filter(Boolean))].sort();
+/* ============ Filters UI (cross-filtering) ============ */
+/* Rows matching every field's current selection EXCEPT the one passed in.
+   Used to work out which options are still relevant for that field's panel. */
+function rowsExcluding(skipField){
+  return state.raw.filter(r=>
+    FILTER_FIELDS.every(f => f===skipField || !state.excluded[f].has(r[f])) &&
+    (!state.dateFrom || r.date >= state.dateFrom) &&
+    (!state.dateTo || r.date <= state.dateTo)
+  );
+}
+
+/* Rebuilds all four filter panels so each one only lists values that are
+   actually reachable given the current selections in the OTHER filters
+   (e.g. picking a Depot narrows Team / Customer type / Product to that depot's data). */
+function refreshFilterPanels(){
+  FILTER_FIELDS.forEach(key=>{
+    const scoped = rowsExcluding(key);
+    const vals = [...new Set(scoped.map(r=>r[key]).filter(Boolean))].sort();
     const panel = document.querySelector(`.filter-group[data-filter="${key}"] .filter-panel`);
+    const prevScroll = panel.scrollTop;
     panel.innerHTML = '';
+    if(vals.length === 0){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:10px 6px;font-size:12.5px;color:var(--ink-faint);';
+      empty.textContent = 'No options for the current selection';
+      panel.appendChild(empty);
+    }
+    vals.forEach(v=>{
+      const lab = document.createElement('label');
+      const checked = !state.excluded[key].has(v);
+      lab.innerHTML = `<input type="checkbox" value="${v}" ${checked?'checked':''}> ${v}`;
+      panel.appendChild(lab);
+    });
     const actions = document.createElement('div');
     actions.className='filter-panel-actions';
     actions.innerHTML = `<button data-act="all">Select all</button><button data-act="none">Clear</button>`;
-    vals.forEach(v=>{
-      const lab = document.createElement('label');
-      lab.innerHTML = `<input type="checkbox" value="${v}" checked> ${v}`;
-      panel.appendChild(lab);
-      state.filters[key].add(v);
-    });
     panel.appendChild(actions);
-    actions.querySelector('[data-act="all"]').onclick = ()=>{ panel.querySelectorAll('input').forEach(cb=>cb.checked=true); syncFilterSet(key,panel); };
-    actions.querySelector('[data-act="none"]').onclick = ()=>{ panel.querySelectorAll('input').forEach(cb=>cb.checked=false); syncFilterSet(key,panel); };
+    actions.querySelector('[data-act="all"]').onclick = ()=>{ vals.forEach(v=>state.excluded[key].delete(v)); onFilterChanged(); };
+    actions.querySelector('[data-act="none"]').onclick = ()=>{ vals.forEach(v=>state.excluded[key].add(v)); onFilterChanged(); };
     panel.querySelectorAll('input[type=checkbox]').forEach(cb=>{
-      cb.addEventListener('change', ()=> syncFilterSet(key,panel));
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) state.excluded[key].delete(cb.value); else state.excluded[key].add(cb.value);
+        onFilterChanged();
+      });
     });
+    panel.scrollTop = prevScroll;
   });
   updateFilterChips();
 }
 
-function syncFilterSet(key,panel){
-  const set = new Set();
-  panel.querySelectorAll('input[type=checkbox]:checked').forEach(cb=>set.add(cb.value));
-  state.filters[key] = set;
-  updateFilterChips();
+/* Called whenever a checkbox / select-all / clear is used: rebuild every panel
+   (so the OTHER filters' option lists reflect the new selection too) and re-filter. */
+function onFilterChanged(){
+  refreshFilterPanels();
   applyFilters();
 }
 
 function updateFilterChips(){
   document.querySelectorAll('.filter-group').forEach(g=>{
     const key = g.dataset.filter;
-    const total = document.querySelectorAll(`.filter-group[data-filter="${key}"] .filter-panel input`).length;
-    const sel = state.filters[key].size;
+    const boxes = document.querySelectorAll(`.filter-group[data-filter="${key}"] .filter-panel input[type=checkbox]`);
+    const total = boxes.length;
+    const sel = document.querySelectorAll(`.filter-group[data-filter="${key}"] .filter-panel input[type=checkbox]:checked`).length;
     const chip = g.querySelector('.fchip');
     const btn = g.querySelector('.filter-btn');
-    if(sel>0 && sel<total){ chip.textContent = sel; chip.className='filter-count fchip'; btn.classList.add('active'); }
+    if(total>0 && sel<total){ chip.textContent = sel; chip.className='filter-count fchip'; btn.classList.add('active'); }
     else { chip.textContent=''; chip.className='fchip'; btn.classList.remove('active'); }
   });
 }
@@ -496,26 +523,19 @@ document.querySelectorAll('.filter-btn').forEach(btn=>{
 });
 document.addEventListener('click', ()=> document.querySelectorAll('.filter-panel').forEach(p=>p.classList.remove('open')));
 
-document.getElementById('dateFrom').addEventListener('change', e=>{ state.dateFrom = e.target.value || null; applyFilters(); });
-document.getElementById('dateTo').addEventListener('change', e=>{ state.dateTo = e.target.value || null; applyFilters(); });
+document.getElementById('dateFrom').addEventListener('change', e=>{ state.dateFrom = e.target.value || null; onFilterChanged(); });
+document.getElementById('dateTo').addEventListener('change', e=>{ state.dateTo = e.target.value || null; onFilterChanged(); });
 document.getElementById('resetFilters').addEventListener('click', ()=>{
-  document.querySelectorAll('.filter-panel input[type=checkbox]').forEach(cb=>cb.checked=true);
-  document.querySelectorAll('.filter-group').forEach(g=>{
-    const key=g.dataset.filter; const set=new Set();
-    g.querySelectorAll('input[type=checkbox]').forEach(cb=>set.add(cb.value));
-    state.filters[key]=set;
-  });
+  FILTER_FIELDS.forEach(f=> state.excluded[f].clear());
   state.dateFrom=null; state.dateTo=null;
   document.getElementById('dateFrom').value=''; document.getElementById('dateTo').value='';
-  updateFilterChips();
-  applyFilters();
+  onFilterChanged();
 });
 
 /* ============ Apply filters + render ============ */
 function applyFilters(){
-  const f = state.filters;
   state.filtered = state.raw.filter(r=>
-    f.depot.has(r.depot) && f.team.has(r.team) && f.ctype.has(r.ctype) && f.product.has(r.product) &&
+    FILTER_FIELDS.every(f => !state.excluded[f].has(r[f])) &&
     (!state.dateFrom || r.date >= state.dateFrom) &&
     (!state.dateTo || r.date <= state.dateTo)
   );
