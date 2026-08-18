@@ -392,18 +392,56 @@ const fmtAmt = n => Math.round(n).toLocaleString('en-US');
 const COLORS = {depot:'#1F3A5F', team:'#0F6E56', ctype:'#B8790E', product:['#B3271E','#1F3A5F','#0F6E56','#B8790E','#7F6DB0','#4A7A3C']};
 
 /* ============ Load data ============ */
+/* Accepts either the compact starter format (Date, Depot, Team, CustomerType,
+   Product, KG, QTY, Amount) or the original ABL export format
+   (Date, Invoice No, Customer Code, Customer Name, Product Name, KG, QTY,
+   Total Amount, Customer Type, Team, Depot, Depot (Troyee), Market, ...). */
 function normalizeRows(objRows){
-  return objRows.map(r=>({
-    date: r.date || r.Date,
-    depot: r.depot || r.Depot,
-    team: r.team || r.Team,
-    ctype: r.ctype || r.CustomerType,
-    product: r.product || r.Product,
-    kg: parseFloat(r.kg ?? r.KG) || 0,
-    qty: parseFloat(r.qty ?? r.QTY) || 0,
-    amt: parseFloat(r.amt ?? r.Amount) || 0,
-    month: (r.date || r.Date || '').slice(0,7)
-  })).filter(r=>r.date && r.depot);
+  return objRows.map(r=>{
+    const lower = {};
+    Object.keys(r).forEach(k=>{ lower[k.trim().toLowerCase()] = r[k]; });
+    const get = (...names)=>{
+      for(const n of names){ const v = lower[n]; if(v!==undefined && v!==null && v!=='') return v; }
+      return undefined;
+    };
+    const date = normalizeDate(get('date'));
+    return {
+      date,
+      depot: get('depot'),
+      team: get('team'),
+      ctype: get('customertype','customer type'),
+      product: get('product','product name'),
+      kg: parseFloat(get('kg')) || 0,
+      qty: parseFloat(get('qty')) || 0,
+      amt: parseFloat(get('amount','amt','total amount')) || 0,
+      month: date ? date.slice(0,7) : ''
+    };
+  }).filter(r=>r.date && r.depot);
+}
+
+function pad2(n){ n = String(n); return n.length<2 ? '0'+n : n; }
+function normalizeDate(v){
+  if(v===undefined || v===null || v==='') return null;
+  if(v instanceof Date) return v.toISOString().slice(0,10);
+  const s = String(v).trim();
+  if(/^\d+(\.\d+)?$/.test(s) && Number(s) > 20000 && Number(s) < 60000){
+    /* Excel serial date (e.g. from a raw .xlsx-derived export) */
+    const utcDays = Math.floor(Number(s) - 25569);
+    const d = new Date(utcDays * 86400 * 1000);
+    return d.toISOString().slice(0,10);
+  }
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m) return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m){
+    let a = parseInt(m[1],10), b = parseInt(m[2],10);
+    const month = a>12 ? b : a;
+    const day = a>12 ? a : b;
+    return `${m[3]}-${pad2(month)}-${pad2(day)}`;
+  }
+  const d = new Date(s);
+  if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+  return null;
 }
 
 function loadBuiltIn(){
